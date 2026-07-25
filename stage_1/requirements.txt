@@ -1,0 +1,10 @@
+torch
+transformers>=4.44
+datasets
+huggingface_hub
+safetensors
+sae_lens
+py3langid
+numpy
+matplotlib
+accelerate
