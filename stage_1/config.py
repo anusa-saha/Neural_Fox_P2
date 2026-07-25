@@ -61,7 +61,7 @@ MODELS = {
 LANGUAGES = {
     "hi": {"flores": "hin_Deva", "lid": "hi"},
     "es": {"flores": "spa_Latn", "lid": "es"},
-    "zh": {"flores": "zho_Hans", "lid": "zh"},
+    "zh": {"flores": "cmn_Hans", "lid": "zh"},
     "bn": {"flores": "ben_Beng", "lid": "bn"},
     "te": {"flores": "tel_Telu", "lid": "te"},
 }
