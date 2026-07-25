@@ -3,7 +3,7 @@ transformers>=4.44
 datasets
 huggingface_hub
 safetensors
-sae_lens
+sae_lens>=5.4.1
 py3langid
 numpy
 matplotlib

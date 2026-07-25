@@ -1,8 +1,3 @@
-"""
-Central config for Neural FOXP2 - Stage I (localizing language-neurons
-in pretrained SAE dictionaries).
-"""
-
 MODELS = {
     "gemma2_9b_it": {
         "hf_id": "google/gemma-2-9b-it",
@@ -10,13 +5,7 @@ MODELS = {
         "n_layers": 42,
         "hidden_size": 3584,
         "hook_module_path": "model.layers.{layer}",
-        # Using the *base* (pt) Gemma Scope release, not -it: gemma-scope-9b-it-res
-        # only has canonical SAEs at 3 layers (9, 20, 31), while gemma-scope-9b-pt-res
-        # covers every layer. Google's own model card for the -it release says PT
-        # SAEs transfer well and are "sufficient... to interpret Gemma 2 9B IT" in
-        # most cases (see google/gemma-scope-9b-it-res on the Hub), so this still
-        # gives every-layer coverage on gemma-2-9b-it's actual activations.
-        "gemma_variant": "pt",          # -> gemma-scope-9b-pt-res-canonical
+        "gemma_variant": "pt",          
         "gemma_width": "16k",
     },
     "llama3_1_8b_instruct": {
@@ -25,10 +14,8 @@ MODELS = {
         "n_layers": 32,
         "hidden_size": 4096,
         "hook_module_path": "model.layers.{layer}",
-        # Llama Scope: "L15R-8x" = 8x-expansion residual-stream SAE for layer 15
-        # -> subfolder "Llama3_1-8B-Base-L15R-8x", each holding a .safetensors file.
-        "sae_repo": "OpenMOSS-Team/Llama-Scope",
-        "sae_subfolder_template": "Llama3_1-8B-Base-L{layer}R-8x",
+        "llama_sae_release": "llama_scope_lxr_8x",
+        "llama_sae_id_template": "l{layer}r_8x",
     },
     "qwen3_8b": {
         "hf_id": "Qwen/Qwen3-8B",
@@ -37,16 +24,11 @@ MODELS = {
         "hidden_size": 4096,
         "hook_module_path": "model.layers.{layer}",
         "sae_repo": "Qwen/SAE-Res-Qwen3-8B-Base-W64K-L0_100",
-        # Confirmed convention: single .pt file per layer, e.g. layer1.sae.pt, layer2.sae.pt, ...
-        # (no zero-padding, ".sae.pt" suffix - not "layer01.pt")
         "sae_filename_template": "layer{layer}.sae.pt",
-        # layer1.sae.pt is assumed to correspond to hidden_states index 0 (the output of
-        # the first transformer block) -> file number = layer index + 1. If it turns
-        # out layer1.sae.pt is actually layer index 1, flip this to 0.
         "sae_layer_index_base": 1,
     },
     "qwen3_5_9b": {
-        "hf_id": "Qwen/Qwen3.5-9B",  # double-check this is the exact *base* checkpoint
+        "hf_id": "Qwen/Qwen3.5-9B",  
         "family": "qwen",
         "n_layers": 40,
         "hidden_size": 4096,
@@ -57,11 +39,11 @@ MODELS = {
     },
 }
 
-# Target languages from the paper -> (FLORES+ config code, ISO-639-1 code for LID)
+
 LANGUAGES = {
     "hi": {"flores": "hin_Deva", "lid": "hi"},
     "es": {"flores": "spa_Latn", "lid": "es"},
-    "zh": {"flores": "cmn_Hans", "lid": "zh"},
+    "zh": {"flores": "zho_Hans", "lid": "zh"},
     "bn": {"flores": "ben_Beng", "lid": "bn"},
     "te": {"flores": "tel_Telu", "lid": "te"},
 }
