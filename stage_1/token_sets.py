@@ -29,8 +29,15 @@ def _in_ranges(ch, ranges):
     return any(lo <= cp <= hi for lo, hi in ranges)
 
 
-def build_token_masks(tokenizer, lang_key, device="cuda"):
-    vocab_size = len(tokenizer)
+def build_token_masks(tokenizer, lang_key, vocab_size, device="cuda"):
+    """vocab_size MUST be the model's actual output dimension
+    (model.get_output_embeddings().weight.shape[0]), not len(tokenizer) -
+    several model families (e.g. Qwen) pad their embedding table to a
+    rounder number for hardware efficiency, so the two can differ (this bit
+    us once already: Qwen3-8B has len(tokenizer)==151669 but
+    logits.shape[-1]==151936). Token ids beyond the tokenizer's real range
+    will simply fail to decode and get skipped, leaving both masks False
+    for them, which is the correct/safe default."""
     target_mask = torch.zeros(vocab_size, dtype=torch.bool)
     english_mask = torch.zeros(vocab_size, dtype=torch.bool)
 

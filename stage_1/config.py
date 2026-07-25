@@ -37,6 +37,26 @@ MODELS = {
         "sae_filename_template": "layer{layer}.sae.pt",
         "sae_layer_index_base": 1,
     },
+    "gemma3_12b_it": {
+        "hf_id": "google/gemma-3-12b-it",
+        "family": "gemma3",
+        "n_layers": 48,
+        "hidden_size": 3840,
+        "hook_module_path": "model.layers.{layer}",
+        "gemma3_scope_release": "gemma-scope-2-12b-it-resid_post",
+        "gemma3_scope_width": "64k",   
+        "gemma3_scope_l0": "medium",   
+    },
+    "gemma3_4b_it": {
+        "hf_id": "google/gemma-3-4b-it",
+        "family": "gemma3",
+        "n_layers": 34,
+        "hidden_size": 2560,
+        "hook_module_path": "model.layers.{layer}",
+        "gemma3_scope_release": "gemma-scope-2-4b-it-resid_post",
+        "gemma3_scope_width": "64k",
+        "gemma3_scope_l0": "medium",
+    },
 }
 
 
@@ -51,25 +71,15 @@ ENGLISH_FLORES = "eng_Latn"
 ENGLISH_LID = "en"
 FLORES_SPLITS = ("dev", "devtest")
 
-# --- Stage I hyperparameters ---
-LAYER_STRIDE = 4            # probe every 4th layer instead of all of them
-N_SENTENCES = 300           # matched EN/target sentence pairs used for selectivity (Stage I-A)
-N_CALIBRATION = 24          # number of weak prompts used for defaultness / causal lift
-HORIZON_T = 3               # aggregate Delta_M over t = 1..HORIZON_T (early commitment window)
-TOP_CANDIDATES_PER_LAYER = 150   # pre-filter by selectivity before the expensive causal lift
-TOP_K_FEATURES_PER_LAYER = 20    # final size of the localized language-neuron set N_lt per layer
-INTERVENTION_EPS = 8.0           # z_j <- z_j + EPS, used for the causal micro-intervention
 
-# --- Batching (tuned for a single RTX PRO 6000 96GB) ---
-# Everything GPU-bound in this pipeline is done as batched forward passes now,
-# and model_utils.py avoids materializing full-sequence logits (the actual
-# cause of large OOMs with big-vocab models like Gemma-2's 256k), so this can
-# likely go higher than 128 if you have headroom to spare. Kept a bit more
-# conservative than a pure "how much fits" number because sequence length
-# varies a lot across languages here - Telugu and Bengali tokenize much less
-# efficiently than English/Hindi, so the same batch size costs noticeably
-# more activation memory for those languages. Lower this if you still hit
-# OOM (especially on te/bn), raise it if you have headroom to spare.
+LAYER_STRIDE = 4            
+N_SENTENCES = 300           
+N_CALIBRATION = 24          
+HORIZON_T = 3               
+TOP_CANDIDATES_PER_LAYER = 150   
+TOP_K_FEATURES_PER_LAYER = 20    
+INTERVENTION_EPS = 8.0           
+
 MAX_BATCH_SIZE = 128
 
 OUTPUT_DIR = "foxp2_stage1_outputs"

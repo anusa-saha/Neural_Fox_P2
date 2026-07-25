@@ -87,11 +87,24 @@ def load_qwen_scope_sae(repo_id, layer, filename_template, layer_index_base, dev
     return SimpleSAE(W_enc, b_enc, W_dec, b_dec).to(device)
 
 
+def load_gemma3_scope_sae(release, layer, width="64k", l0="medium", device="cuda"):
+    from sae_lens import SAE
+    sae_id = f"layer_{layer}_width_{width}_l0_{l0}"
+    sae, _cfg, _sparsity = SAE.from_pretrained(release=release, sae_id=sae_id, device=device)
+    return _wrap_saelens(sae).to(device)
+
+
 def get_sae_for_layer(model_key, model_cfg, layer, device="cuda"):
     family = model_cfg["family"]
     if family == "gemma":
         return load_gemma_scope_sae(
             layer, width=model_cfg["gemma_width"], variant=model_cfg["gemma_variant"], device=device
+        )
+    elif family == "gemma3":
+        return load_gemma3_scope_sae(
+            model_cfg["gemma3_scope_release"], layer,
+            width=model_cfg["gemma3_scope_width"], l0=model_cfg["gemma3_scope_l0"],
+            device=device,
         )
     elif family == "llama":
         return load_llama_scope_sae(

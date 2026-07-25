@@ -74,6 +74,11 @@ def run_stage1_for_model(model_key, languages=None, layers_override=None):
     tokenizer = AutoTokenizer.from_pretrained(cfg["hf_id"])
     prepare_tokenizer_for_batching(tokenizer)
     model = load_model(cfg)
+    # The model's real output vocab size (what logits.shape[-1] actually is)
+    # can differ from len(tokenizer) - e.g. Qwen pads its embedding table to
+    # a rounder number for hardware efficiency. Masks must be sized to THIS,
+    # not the tokenizer's vocab size, or indexing logits with the mask fails.
+    vocab_size = model.get_output_embeddings().weight.shape[0]
 
     # Some SAE releases only cover specific layers (e.g. Gemma Scope's -it
     # release only has canonical SAEs at 3 layers) - use that exact list if
@@ -103,7 +108,7 @@ def run_stage1_for_model(model_key, languages=None, layers_override=None):
         en_texts = [p[0] for p in pairs]
         tgt_texts = [p[1] for p in pairs]
 
-        target_mask, english_mask = build_token_masks(tokenizer, lang_key, device=DEVICE)
+        target_mask, english_mask = build_token_masks(tokenizer, lang_key, vocab_size, device=DEVICE)
         lid_identifier = build_lid_identifier([lang_cfg["lid"], ENGLISH_LID])
 
         lang_dir = os.path.join(out_root, lang_key)
