@@ -3,6 +3,8 @@ from huggingface_hub import hf_hub_download
 
 
 class SimpleSAE:
+    """z = relu(x @ W_enc + b_enc);  dh/dz_j = W_dec[j]  (decoder row for feature j)."""
+
     def __init__(self, W_enc, b_enc, W_dec, b_dec):
         self.W_enc = W_enc
         self.b_enc = b_enc
@@ -87,7 +89,7 @@ def load_qwen_scope_sae(repo_id, layer, filename_template, layer_index_base, dev
     return SimpleSAE(W_enc, b_enc, W_dec, b_dec).to(device)
 
 
-def load_gemma3_scope_sae(release, layer, width="64k", l0="medium", device="cuda"):
+def load_gemma3_scope_sae(release, layer, width="16k", l0="small", device="cuda"):
     from sae_lens import SAE
     sae_id = f"layer_{layer}_width_{width}_l0_{l0}"
     sae, _cfg, _sparsity = SAE.from_pretrained(release=release, sae_id=sae_id, device=device)

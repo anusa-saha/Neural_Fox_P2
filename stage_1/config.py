@@ -42,28 +42,28 @@ MODELS = {
         "family": "gemma3",
         "n_layers": 48,
         "hidden_size": 3840,
-        "hook_module_path": "model.layers.{layer}",
-        "gemma3_scope_release": "gemma-scope-2-12b-it-resid_post",
-        "gemma3_scope_width": "64k",   
-        "gemma3_scope_l0": "medium",   
+        "hook_module_path": "model.language_model.layers.{layer}",
+        "gemma3_scope_release": "gemma-scope-2-12b-it-res-all",
+        "gemma3_scope_width": "16k",
+        "gemma3_scope_l0": "small",  
     },
     "gemma3_4b_it": {
         "hf_id": "google/gemma-3-4b-it",
         "family": "gemma3",
         "n_layers": 34,
         "hidden_size": 2560,
-        "hook_module_path": "model.layers.{layer}",
-        "gemma3_scope_release": "gemma-scope-2-4b-it-resid_post",
-        "gemma3_scope_width": "64k",
-        "gemma3_scope_l0": "medium",
+        "hook_module_path": "model.language_model.layers.{layer}",
+        "gemma3_scope_release": "gemma-scope-2-4b-it-res-all",
+        "gemma3_scope_width": "16k",
+        "gemma3_scope_l0": "small",
     },
 }
 
-
+# Target languages from the paper -> (FLORES+ config code, ISO-639-1 code for LID)
 LANGUAGES = {
     "hi": {"flores": "hin_Deva", "lid": "hi"},
     "es": {"flores": "spa_Latn", "lid": "es"},
-    "zh": {"flores": "zho_Hans", "lid": "zh"},
+    "zh": {"flores": "cmn_Hans", "lid": "zh"},
     "bn": {"flores": "ben_Beng", "lid": "bn"},
     "te": {"flores": "tel_Telu", "lid": "te"},
 }
@@ -71,7 +71,7 @@ ENGLISH_FLORES = "eng_Latn"
 ENGLISH_LID = "en"
 FLORES_SPLITS = ("dev", "devtest")
 
-
+# --- Stage I hyperparameters ---
 LAYER_STRIDE = 4            
 N_SENTENCES = 300           
 N_CALIBRATION = 24          
