@@ -1,23 +1,3 @@
-"""
-Neural FOXP2 - Stage I: Localize Language Neurons in a (pretrained) SAE
-Dictionary Basis. Batched version - see model_utils.py for the batching
-machinery. Design, for a single RTX PRO 6000 (96GB):
-
-  - Stage I-A (selectivity): all 600 EN/target sentences for a layer are
-    encoded in a handful of MAX_BATCH_SIZE-sized batches instead of one
-    forward pass per sentence.
-  - Stage I-B (causal lift): instead of looping "for each of 150 candidate
-    features: for each of 24 calibration prompts: 3 sequential forward
-    passes", we build ONE (candidates x calibration) cross-product - up to
-    150*24=3600 rows - each row carrying its own per-feature residual-stream
-    delta, and let batched_horizon_defaultness chunk that by MAX_BATCH_SIZE
-    and run it through the model. This turns ~10,800 tiny memory-bound
-    forward calls per layer into ~45 large, mostly compute-bound ones.
-  - The "no edit" baseline is computed once per (model, language) - not
-    once per layer - since a zero delta is mathematically a no-op.
-
-Run with:  python stage1_localize.py
-"""
 import os
 import json
 import numpy as np
@@ -199,14 +179,23 @@ def run_stage1_for_model(model_key, languages=None, layers_override=None):
                 z_tgt=z_tgt[:, top_features].numpy(),
             )
 
-        with open(os.path.join(lang_dir, "stage1_summary.json"), "w") as f:
+        summary_path = os.path.join(lang_dir, "stage1_summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path) as f:
+                existing = json.load(f)
+            merged_layers = existing.get("layers", {})
+        else:
+            merged_layers = {}
+        merged_layers.update({str(l): v for l, v in layer_summaries.items()})
+
+        with open(summary_path, "w") as f:
             json.dump({
                 "model": model_key,
                 "language": lang_key,
                 "horizon_T": HORIZON_T,
                 "baseline_default_mass": baseline_mass,
                 "baseline_default_lid": baseline_lid,
-                "layers": {str(l): v for l, v in layer_summaries.items()},
+                "layers": merged_layers,
             }, f, indent=2)
 
     del model
