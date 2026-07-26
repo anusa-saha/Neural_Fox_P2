@@ -25,7 +25,7 @@ MODELS = {
         "hook_module_path": "model.layers.{layer}",
         "sae_repo": "Qwen/SAE-Res-Qwen3-8B-Base-W64K-L0_100",
         "sae_filename_template": "layer{layer}.sae.pt",
-        "sae_layer_index_base": 1,
+        "sae_layer_index_base": 0,
     },
     "qwen3_5_9b": {
         "hf_id": "Qwen/Qwen3.5-9B",  
@@ -35,7 +35,7 @@ MODELS = {
         "hook_module_path": "model.layers.{layer}",
         "sae_repo": "Qwen/SAE-Res-Qwen3.5-9B-Base-W64K-L0_100",
         "sae_filename_template": "layer{layer}.sae.pt",
-        "sae_layer_index_base": 1,
+        "sae_layer_index_base": 0,
     },
     "gemma3_12b_it": {
         "hf_id": "google/gemma-3-12b-it",
