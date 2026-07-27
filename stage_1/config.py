@@ -45,7 +45,7 @@ MODELS = {
         "hook_module_path": "model.language_model.layers.{layer}",
         "gemma3_scope_release": "gemma-scope-2-12b-it-res-all",
         "gemma3_scope_width": "16k",
-        "gemma3_scope_l0": "small",  
+        "gemma3_scope_l0": "medium",  
     },
     "gemma3_4b_it": {
         "hf_id": "google/gemma-3-4b-it",
@@ -55,7 +55,7 @@ MODELS = {
         "hook_module_path": "model.language_model.layers.{layer}",
         "gemma3_scope_release": "gemma-scope-2-4b-it-res-all",
         "gemma3_scope_width": "16k",
-        "gemma3_scope_l0": "small",
+        "gemma3_scope_l0": "medium",
     },
 }
 
