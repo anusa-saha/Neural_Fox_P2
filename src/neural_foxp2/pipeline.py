@@ -52,6 +52,22 @@ from .stage2_geometry import Stage2Config, compute_layer_geometries, select_wind
 from .stage3_steer import compute_steering_vectors, NeuralFOXP2Steerer
 from .serialization import save_stage1, save_stage2, save_stage3, save_run_config, append_generation_log
 
+# Single-GPU, large-VRAM cards (e.g. RTX PRO 6000 Blackwell, 96GB) can hold any
+# model in config.MODELS plus every SAE plus all activations at once, so this
+# pipeline intentionally never shards a model across devices. Two settings do
+# matter for that class of card though:
+#   - TF32 matmuls: free speedup on Ampere+ (including Blackwell) for the fp32
+#     accumulations that show up in the Stage II SVD / metrics code.
+#   - attn_implementation: newer GPU architectures (Blackwell = sm_120) are
+#     sometimes ahead of the FlashAttention-2 wheel you have installed, in
+#     which case attn_implementation="flash_attention_2" fails hard rather
+#     than degrading gracefully. "sdpa" (PyTorch's built-in kernels, which
+#     include a Blackwell-covered flash-attention backend) is the safe
+#     default; pass attn_implementation="flash_attention_2" explicitly once
+#     you've confirmed your installed flash-attn build supports sm_120.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 @dataclass
 class FOXP2Artifacts:
@@ -63,7 +79,8 @@ class FOXP2Artifacts:
 
 class NeuralFOXP2Pipeline:
     def __init__(self, model_key: str, lang_code: str, device: str = "cuda",
-                 candidate_layers: Optional[List[int]] = None, dtype=torch.bfloat16):
+                 candidate_layers: Optional[List[int]] = None, dtype=torch.bfloat16,
+                 attn_implementation: str = "sdpa"):
         if model_key not in MODELS:
             raise ValueError(f"Unknown model_key {model_key}; see config.MODELS")
         from transformers import AutoModelForCausalLM, AutoTokenizer  # local import
@@ -76,9 +93,18 @@ class NeuralFOXP2Pipeline:
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_cfg["hf_id"])
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        # Load straight onto `device` (device_map={"": device} + low_cpu_mem_usage)
+        # instead of building the full model on CPU and then `.to(device)`-ing it --
+        # the latter briefly holds two full copies of the weights in memory and is
+        # pure overhead once everything (model + SAEs + activations) fits on one
+        # card, which it does at 96GB for every model in config.MODELS.
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_cfg["hf_id"], torch_dtype=dtype
-        ).to(device).eval()
+            self.model_cfg["hf_id"],
+            torch_dtype=dtype,
+            device_map={"": device},
+            low_cpu_mem_usage=True,
+            attn_implementation=attn_implementation,
+        ).eval()
 
         n_layers = self.model_cfg["n_layers"]
         # Exclude the first/last couple of layers by default (steering the

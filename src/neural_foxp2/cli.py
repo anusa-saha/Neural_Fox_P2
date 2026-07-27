@@ -27,6 +27,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Key in config.LANGUAGES, e.g. hi, es, zh, bn, te")
     p.add_argument("--device", default="cuda", help="cuda | cuda:0 | cpu")
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+    p.add_argument("--attn_implementation", default="sdpa",
+                    choices=["sdpa", "eager", "flash_attention_2"],
+                    help="Attention kernel backend. 'sdpa' (default) uses PyTorch's built-in "
+                         "kernels and is safe on new GPU architectures (e.g. Blackwell/sm_120) "
+                         "even if your installed flash-attn wheel doesn't yet support them. Only "
+                         "pass 'flash_attention_2' once you've confirmed your flash-attn build "
+                         "supports your GPU's compute capability.")
     p.add_argument("--output_dir", required=True,
                     help="Directory to write run_config.json / stage*.json / generation_log.json into")
 
@@ -60,6 +67,7 @@ def main(argv=None):
     pipe = NeuralFOXP2Pipeline(
         model_key=args.model_key, lang_code=args.lang_code, device=args.device,
         candidate_layers=candidate_layers, dtype=dtype,
+        attn_implementation=args.attn_implementation,
     )
     artifacts = pipe.run(
         n_disc=args.n_disc, n_calib=args.n_calib, n_weak=args.n_weak,
