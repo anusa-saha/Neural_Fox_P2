@@ -38,12 +38,19 @@ neural-foxp2/
 │   ├── pipeline.py            # NeuralFOXP2Pipeline: orchestrates I -> II -> III
 │   └── cli.py                 # `foxp2-run` entry point
 ├── scripts/
-│   ├── run_pipeline.py        # thin wrapper, works without installing the package
+│   ├── run_pipeline.py         # thin wrapper, works without installing the package
+│   ├── run_batch.py            # run multiple (model, language) jobs sequentially, one GPU
+│   ├── batch_jobs_example.json
 │   └── prompts_example.txt
 ├── tests/
-│   └── test_synthetic.py      # network-free sanity checks (SVD/eigengap/projector math)
-└── outputs/                   # created at runtime
+│   ├── test_synthetic.py      # network-free sanity checks (SVD/eigengap/projector math)
+│   └── test_gpu_utils.py      # network-free sanity checks (VRAM-tiered batching, OOM backoff)
+└── outputs/                   # created at runtime, gitignored
 ```
+
+`src/neural_foxp2/gpu_utils.py` is new: it holds `GPUBudget` (batch sizes +
+SAE dtype), VRAM auto-detection, a `torch.cuda.OutOfMemoryError`-safe batching
+helper, and memory-snapshot reporting -- see "GPU memory management" below.
 
 ## Install
 
@@ -69,6 +76,12 @@ pytest tests/ -v
 ### 1. One-time setup on the GPU box
 
 ```bash
+ssh you@your-gpu-box
+git clone <this-repo> neural-foxp2 && cd neural-foxp2
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -e .
 
 nvidia-smi                       # sanity-check the GPU is visible
@@ -80,7 +93,7 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 Several checkpoints are gated (Llama, Gemma Scope):
 
 ```bash
-hf auth login            # paste a token with read access to the gated repos you need
+huggingface-cli login            # paste a token with read access to the gated repos you need
 ```
 
 ### 3. Run the full pipeline (Stage I → II → III) + generate
@@ -138,19 +151,109 @@ to add `device_map="auto"` if you need automatic sharding across GPUs):
 CUDA_VISIBLE_DEVICES=0,1,2,3 foxp2-run --model_key qwen3_8b --lang_code zh --device cuda ...
 ```
 
-### 5. Memory ballpark (bf16, single GPU)
+### 5. Running many (model, language) jobs back-to-back
 
-| Model | Approx. VRAM (weights + activations, bf16) |
-|---|---|
-| `gemma2_9b_it` (9B) | ~20–24 GB |
-| `llama3_1_8b_instruct` (8B) | ~18–20 GB |
-| `qwen3_8b` (8B) | ~18–20 GB |
+```bash
+python scripts/run_batch.py \
+  --jobs_file scripts/batch_jobs_example.json \
+  --output_root outputs/batch_run \
+  --device cuda
+```
 
-Add a few GB of headroom for the per-layer SAEs (loaded for every candidate
-layer up front) and for the activation-capture buffers used during Stage
-I/II. If you're VRAM-constrained, shrink `--candidate_layers` to a smaller
-mid-network band (e.g. `--candidate_layers 10,11,...,24`) rather than
-scanning every layer.
+Each job in the JSON file gets its own model instance, its own output
+subdirectory, and a full `pipe.close()` (frees the model + all SAEs + CUDA
+memory) before the next job loads — so job N+1 never inherits job N's
+memory footprint. A failing job is recorded in `batch_summary.json` with its
+traceback rather than aborting the rest of the batch.
+
+---
+
+## GPU memory management (tuned for RTX PRO 6000, 96 GB)
+
+Three things actually cause CUDA OOMs in this kind of pipeline, and all three
+are now handled:
+
+1. **Forgetting `torch.no_grad()`.** Every activation-capture / scoring /
+   causal-lift forward pass runs under `@torch.no_grad()`
+   (`activations.capture_hidden_states_batched`, `metrics.next_token_distributions`,
+   Stage I/II probes) and every model parameter is `requires_grad_(False)`
+   at load time. Building a full backward graph over an 8-9B model's forward
+   pass, even just once by accident, costs far more memory than every other
+   fix below combined — this was the single largest risk in the original code.
+
+2. **Loading too many SAEs in fp32 at once.** SAEs are loaded per-layer, and
+   Stage I/II need every *candidate* layer's SAE simultaneously. At fp32 this
+   adds up fast:
+
+   | Model | d_model × d_sae | SAE size/layer (fp32 → bf16) | All candidate layers (fp32 → bf16) |
+   |---|---|---|---|
+   | `gemma2_9b_it` | 3584 × 16384 | 0.47 GB → 0.24 GB | 17.9 GB → **8.9 GB** |
+   | `llama3_1_8b_instruct` | 4096 × 32768 | 1.07 GB → 0.54 GB | 30.1 GB → **15.0 GB** |
+   | `qwen3_8b` | 4096 × 65536 | 2.15 GB → 1.07 GB | 68.7 GB → **34.4 GB** |
+
+   `GPUBudget.sae_dtype` defaults to **bf16**, roughly halving this. Combined
+   with the base model (~16-20 GB bf16), even the worst case here
+   (Qwen: 34.4 GB SAEs + ~18 GB model ≈ 52 GB) leaves comfortable headroom on
+   a 96 GB card. Once Stage II selects the final intervention window
+   (typically 2-5 layers), every *non-window* layer's SAE is freed
+   (`GPUBudget.offload_non_window_saes`, on by default) — standing memory
+   during generation drops to just the window layers.
+
+3. **Unbounded batch sizes.** `n_disc`/`n_calib`/`n_weak` prompt lists and
+   the Stage I causal-lift decoding loop are always chunked
+   (`GPUBudget.prompt_batch_size`, `lift_probe_batch_size`,
+   `generate_batch_size`), never forwarded as one giant batch. Every chunked
+   forward pass is wrapped so that a `torch.cuda.OutOfMemoryError` **halves
+   the batch size and retries the same chunk** (down to `min_batch_size=1`)
+   instead of crashing the run — see `gpu_utils.safe_batched_call` and its
+   inline use in `activations.py` / `metrics.py` / `pipeline.py`.
+
+`GPUBudget` auto-detects VRAM and picks defaults accordingly
+(`gpu_utils.recommended_budget`):
+
+| Detected VRAM | prompt_batch_size | lift_probe_batch_size | generate_batch_size |
+|---|---|---|---|
+| ≥ 80 GB (RTX PRO 6000 / A100-80GB / H100) | 32 | 64 | 16 |
+| ≥ 40 GB (A100-40GB / RTX 6000 Ada) | 16 | 32 | 8 |
+| ≥ 20 GB (RTX 4090 / 3090) | 8 | 16 | 4 |
+| < 20 GB | 4 | 8 | 2 |
+
+Override any of these explicitly:
+
+```bash
+foxp2-run --model_key llama3_1_8b_instruct --lang_code hi --device cuda \
+  --output_dir outputs/llama3_1_8b_instruct-hi \
+  --batch_size 32 --lift_probe_batch_size 64 --generate_batch_size 16 \
+  --sae_dtype bfloat16 \
+  --prompts_file scripts/prompts_example.txt --gammas 0,1,2
+```
+
+Or from Python:
+
+```python
+from neural_foxp2 import NeuralFOXP2Pipeline, GPUBudget
+import torch
+
+budget = GPUBudget(prompt_batch_size=32, lift_probe_batch_size=64,
+                    generate_batch_size=16, sae_dtype=torch.bfloat16)
+pipe = NeuralFOXP2Pipeline(model_key="llama3_1_8b_instruct", lang_code="hi",
+                            device="cuda", gpu_budget=budget)
+```
+
+Every run also writes `memory_report.json` (GPU memory snapshots taken
+before the run and after each stage) so you can confirm actual usage after
+the fact:
+
+```python
+import json
+print(json.load(open("outputs/llama3_1_8b_instruct-hi/memory_report.json")))
+# {"before_run": {...}, "after_stage1": {...}, "after_stage2": {...}, "after_stage3": {...}}
+```
+
+If you're VRAM-constrained on a smaller card, shrink `--candidate_layers` to
+a narrower mid-network band (e.g. `--candidate_layers 10,11,...,24`) rather
+than scanning every layer — fewer candidate layers means fewer SAEs loaded
+at once during Stage I/II, on top of everything above.
 
 ---
 
@@ -166,7 +269,8 @@ After a run, `outputs/<run_name>/` contains:
 | `stage2_directions.pt` | Raw right-singular-vector matrices `V[:, :r_l]` per layer (torch, for re-loading/plotting spectra in full). |
 | `stage3_vectors.json` | Per window layer: `lambda_l`, `beta_l`, support size, `‖mu_target‖`, `‖mu_en‖`, vector previews. |
 | `stage3_vectors.pt` | Raw `mu_target_final` / `mu_en_masked` / `support_mask` tensors per layer. |
-| `generation_log.json` | One record per `.generate(...)` call: prompt, `gamma`, `delta_m_baseline`, `delta_m_steered`, `delta_m_gain`, and the generated text — a growing JSON list, safe to `tail`/reload mid-run. |
+| `memory_report.json` | GPU memory snapshots (`gpu_utils.memory_snapshot`) taken before the run and after each stage — confirms actual VRAM usage per stage. |
+| `generation_log.json` | One record per prompt per `.generate(...)`/`.generate_batch(...)` call: prompt, `gamma`, `delta_m_baseline`, `delta_m_steered`, `delta_m_gain`, and the generated text — a growing JSON list, safe to `tail`/reload mid-run. |
 
 Quick analysis example:
 

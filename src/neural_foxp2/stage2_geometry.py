@@ -29,6 +29,7 @@ class Stage2Config:
     bootstrap_rounds: int = 8
     gain_eta: float = 4.0     # steering magnitude used only to *probe* per-layer gain (Sec 2.2)
     horizon: int = 3
+    lift_probe_batch_size: int = 32   # weak-prompt batch size for the per-layer gain probe
 
 
 @dataclass
@@ -124,12 +125,13 @@ def _feature_to_hidden(sae: SimpleSAE, z_vec: torch.Tensor) -> torch.Tensor:
 def probe_layer_gain(
     model, tokenizer, model_cfg, layer: int, direction_hidden: torch.Tensor,
     weak_prompts, target_ids, english_ids, eta: float, horizon: int, device,
+    batch_size: int = None,
 ) -> float:
     """Gain_l: apply the (data-derived, unnormalized) target direction at a
     single layer at strength eta, measure induced Delta_M gain (Sec 2.2,
     "Functional sensitivity"). Used only to *score* candidate windows -- the
     final Stage III edit uses its own tuned (lambda_l, beta_l)."""
-    base_probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device)
+    base_probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device, batch_size=batch_size)
     base_dm = delta_m(base_probs, target_ids.to(device), english_ids.to(device)).mean().item()
 
     d = eta * direction_hidden
@@ -138,7 +140,7 @@ def probe_layer_gain(
         return d.to(h.dtype)
 
     with ResidualSteer(model, model_cfg, {layer: fn}):
-        probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device)
+        probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device, batch_size=batch_size)
     dm = delta_m(probs, target_ids.to(device), english_ids.to(device)).mean().item()
     return dm - base_dm
 
@@ -170,6 +172,7 @@ def compute_layer_geometries(
         gain = probe_layer_gain(
             model, tokenizer, model_cfg, layer, direction_hidden,
             weak_prompts, target_ids, english_ids, cfg.gain_eta, cfg.horizon, device,
+            batch_size=cfg.lift_probe_batch_size,
         )
         geoms[layer] = LayerGeometry(
             layer=layer, support=support_idx, singular_values=sigma, directions=v_r,

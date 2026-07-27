@@ -21,8 +21,10 @@ the paper's own discussion of shared-token inflation and transliteration
 wins (Appendix D.1.5, Table 8) for why a production system should replace
 this with a corpus-derived diagnostic + transliteration-aware token set.
 """
-from typing import Sequence, Tuple
+from typing import List, Sequence, Tuple
 import torch
+
+from .gpu_utils import free_memory
 
 UNICODE_SCRIPT_RANGES = {
     "hi": [(0x0900, 0x097F)],  # Devanagari
@@ -73,10 +75,11 @@ def build_token_sets(tokenizer, lang_code: str) -> Tuple[torch.Tensor, torch.Ten
 
 
 @torch.no_grad()
-def next_token_distributions(model, tokenizer, prompts: Sequence[str], horizon: int, device) -> torch.Tensor:
-    """Greedy-decode `horizon` steps, recording p_theta(. | ctx_t) at each step.
+def _next_token_distributions_single_batch(model, tokenizer, prompts: List[str], horizon: int, device) -> torch.Tensor:
+    """Greedy-decode `horizon` steps for one (already batch-size-bounded)
+    chunk of prompts, recording p_theta(. | ctx_t) at each step.
 
-    Returns a tensor [n_prompts, horizon, vocab].
+    Returns a tensor [len(prompts), horizon, vocab].
     """
     enc = tokenizer(list(prompts), return_tensors="pt", padding=True).to(device)
     input_ids = enc["input_ids"]
@@ -96,6 +99,40 @@ def next_token_distributions(model, tokenizer, prompts: Sequence[str], horizon: 
         cur_ids = next_ids
         cur_attn = torch.cat([cur_attn, torch.ones_like(next_ids)], dim=-1)
     return torch.stack(all_probs, dim=1)  # [B, horizon, V]
+
+
+@torch.no_grad()
+def next_token_distributions(
+    model, tokenizer, prompts: Sequence[str], horizon: int, device,
+    batch_size: int = None, min_batch_size: int = 1,
+) -> torch.Tensor:
+    """Greedy-decode `horizon` steps, recording p_theta(. | ctx_t) at each
+    step, chunking `prompts` into batches of `batch_size` (default: no
+    chunking, i.e. the whole list at once -- pass a bound from GPUBudget in
+    any hot loop). Automatically halves the batch size (down to
+    `min_batch_size`) and retries on `torch.cuda.OutOfMemoryError` before
+    re-raising once the floor is hit.
+
+    Returns a tensor [n_prompts, horizon, vocab] on `device`.
+    """
+    prompts = list(prompts)
+    if batch_size is None:
+        batch_size = len(prompts)
+
+    chunks = []
+    i = 0
+    bs = max(1, batch_size)
+    while i < len(prompts):
+        chunk = prompts[i:i + bs]
+        try:
+            chunks.append(_next_token_distributions_single_batch(model, tokenizer, chunk, horizon, device))
+            i += bs
+        except torch.cuda.OutOfMemoryError:
+            free_memory()
+            if bs <= min_batch_size:
+                raise
+            bs = max(min_batch_size, bs // 2)
+    return torch.cat(chunks, dim=0)
 
 
 def mass(probs_bt_v: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:

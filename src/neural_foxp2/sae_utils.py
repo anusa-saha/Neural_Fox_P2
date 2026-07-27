@@ -11,11 +11,23 @@ class SimpleSAE:
         self.W_dec = W_dec
         self.b_dec = b_dec
 
-    def to(self, device):
-        self.W_enc = self.W_enc.to(device)
-        self.b_enc = self.b_enc.to(device)
-        self.W_dec = self.W_dec.to(device)
-        self.b_dec = self.b_dec.to(device)
+    def to(self, device, dtype=None):
+        """Move (and optionally cast) all four weight tensors.
+
+        Passing `dtype` (e.g. torch.bfloat16) roughly halves the SAE's
+        resident VRAM footprint vs. the fp32 checkpoints these are usually
+        released in -- meaningful when many layers' SAEs are held in memory
+        simultaneously during Stage I/II discovery. `encode()`/`decoder_row()`
+        still upcast to float32 for the actual matmuls, so this only affects
+        storage, not numerical precision of any single computation.
+        """
+        kwargs = {"device": device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        self.W_enc = self.W_enc.to(**kwargs)
+        self.b_enc = self.b_enc.to(**kwargs)
+        self.W_dec = self.W_dec.to(**kwargs)
+        self.b_dec = self.b_dec.to(**kwargs)
         return self
 
     def encode(self, x):
@@ -96,27 +108,35 @@ def load_gemma3_scope_sae(release, layer, width="16k", l0="small", device="cuda"
     return _wrap_saelens(sae).to(device)
 
 
-def get_sae_for_layer(model_key, model_cfg, layer, device="cuda"):
+def get_sae_for_layer(model_key, model_cfg, layer, device="cuda", dtype=None):
+    """Load one layer's pretrained SAE, then optionally cast it to `dtype`
+    (e.g. torch.bfloat16) to reduce its resident VRAM footprint -- see
+    SimpleSAE.to() docstring. `dtype=None` preserves the original
+    (fp32-checkpoint) behavior."""
     family = model_cfg["family"]
     if family == "gemma":
-        return load_gemma_scope_sae(
+        sae = load_gemma_scope_sae(
             layer, width=model_cfg["gemma_width"], variant=model_cfg["gemma_variant"], device=device
         )
     elif family == "gemma3":
-        return load_gemma3_scope_sae(
+        sae = load_gemma3_scope_sae(
             model_cfg["gemma3_scope_release"], layer,
             width=model_cfg["gemma3_scope_width"], l0=model_cfg["gemma3_scope_l0"],
             device=device,
         )
     elif family == "llama":
-        return load_llama_scope_sae(
+        sae = load_llama_scope_sae(
             model_cfg["llama_sae_release"], model_cfg["llama_sae_id_template"], layer, device=device
         )
     elif family == "qwen":
-        return load_qwen_scope_sae(
+        sae = load_qwen_scope_sae(
             model_cfg["sae_repo"], layer,
             model_cfg["sae_filename_template"], model_cfg["sae_layer_index_base"],
             device=device,
         )
     else:
         raise ValueError(f"Unknown model family: {family}")
+
+    if dtype is not None:
+        sae = sae.to(device, dtype=dtype)
+    return sae

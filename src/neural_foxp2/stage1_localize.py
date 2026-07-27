@@ -24,8 +24,9 @@ from typing import Dict, List, Tuple
 import torch
 
 from .sae_utils import SimpleSAE
-from .activations import ResidualSteer, capture_hidden_states
+from .activations import ResidualSteer, capture_hidden_states_batched
 from .metrics import next_token_distributions, delta_m
+from .gpu_utils import free_memory
 
 
 @dataclass
@@ -36,7 +37,8 @@ class Stage1Config:
     horizon: int = 3                              # T in {1, 2, 3}
     eps: float = 1e-6
     lift_candidate_pool: int = 64                 # pre-filter size before the (expensive) lift probe
-    capture_batch_size: int = 16                  # chunk size for no_grad activation capture (OOM guard)
+    prompt_batch_size: int = 16                   # matched-pair activation-capture batch size
+    lift_probe_batch_size: int = 32               # weak-prompt batch size for the causal-lift decode
 
 
 @dataclass
@@ -49,8 +51,20 @@ class LanguageFeature:
 
 
 def compute_feature_activations(saes: Dict[int, SimpleSAE], hiddens: Dict[int, torch.Tensor]) -> Dict[int, torch.Tensor]:
-    """z^(l)(x) for a batch of hidden states h^(l)(x), one SAE per layer."""
-    return {l: saes[l].encode(hiddens[l]) for l in hiddens}
+    """z^(l)(x) for a batch of hidden states h^(l)(x), one SAE per layer.
+
+    Hidden states may live on CPU (they're captured there by default to keep
+    peak VRAM low during long activation-capture loops -- see
+    activations.capture_hidden_states_batched); this moves each layer's
+    tensor onto whichever device its SAE lives on before encoding.
+    """
+    out = {}
+    for l, h in hiddens.items():
+        sae = saes[l]
+        if h.device != sae.W_enc.device:
+            h = h.to(sae.W_enc.device)
+        out[l] = sae.encode(h)
+    return out
 
 
 def selectivity_scores(z_tgt: torch.Tensor, z_en: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -75,7 +89,9 @@ def causal_lift_scores(
     what sae_utils.SimpleSAE.decoder_row(j) is built to hand back
     ("dh/dz_j = W_dec[j]").
     """
-    base_probs = next_token_distributions(model, tokenizer, weak_prompts, cfg.horizon, device)
+    base_probs = next_token_distributions(
+        model, tokenizer, weak_prompts, cfg.horizon, device, batch_size=cfg.lift_probe_batch_size,
+    )
     base_dm = delta_m(base_probs, target_ids.to(device), english_ids.to(device)).mean(dim=1)  # [B]
 
     slopes = torch.zeros(len(feature_indices))
@@ -89,12 +105,16 @@ def causal_lift_scores(
                 return direction.to(h.dtype)
 
             with ResidualSteer(model, model_cfg, {layer: fn}):
-                probs = next_token_distributions(model, tokenizer, weak_prompts, cfg.horizon, device)
+                probs = next_token_distributions(
+                    model, tokenizer, weak_prompts, cfg.horizon, device, batch_size=cfg.lift_probe_batch_size,
+                )
             dm = delta_m(probs, target_ids.to(device), english_ids.to(device)).mean(dim=1)
             lift = (dm - base_dm).mean().item()
             ratios.append(lift / alpha)
         ratios.sort()
         slopes[fi] = ratios[len(ratios) // 2]  # median over alpha (Sec 2.1.2)
+        if (fi + 1) % 16 == 0:
+            free_memory()  # periodically hand fragmented blocks back to the allocator
     return slopes
 
 
@@ -123,14 +143,15 @@ def localize_language_features(
     cfg: Stage1Config, device,
 ) -> Dict[int, List[LanguageFeature]]:
     """Full Stage I pipeline -> N_lt organized as {layer: [LanguageFeature, ...]}."""
-    h_en = capture_hidden_states(
-        model, model_cfg, tokenizer, en_prompts, cfg.candidate_layers, device,
-        batch_size=cfg.capture_batch_size,
+    h_en = capture_hidden_states_batched(
+        model, tokenizer, model_cfg, cfg.candidate_layers, en_prompts,
+        batch_size=cfg.prompt_batch_size, device=device, store_device="cpu",
     )
-    h_tgt = capture_hidden_states(
-        model, model_cfg, tokenizer, tgt_prompts, cfg.candidate_layers, device,
-        batch_size=cfg.capture_batch_size,
+    h_tgt = capture_hidden_states_batched(
+        model, tokenizer, model_cfg, cfg.candidate_layers, tgt_prompts,
+        batch_size=cfg.prompt_batch_size, device=device, store_device="cpu",
     )
+    free_memory()
 
     z_en = compute_feature_activations(saes, h_en)
     z_tgt = compute_feature_activations(saes, h_tgt)

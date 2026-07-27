@@ -7,6 +7,10 @@ dist/
 venv/
 .env
 
+# Runtime artifacts (JSON logs, .pt tensors) -- regenerate per run, don't commit
+outputs/
+*.pt
+
 # HF cache if ever pointed locally
 .cache/
 .pytest_cache/

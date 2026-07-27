@@ -130,6 +130,13 @@ def save_stage3(vectors: Dict[int, Any], output_dir: str):
     )
 
 
+def save_memory_report(snapshots: Dict[str, Any], output_dir: str):
+    """GPU memory snapshots (see gpu_utils.memory_snapshot) taken at stage
+    boundaries -- before_run / after_stage1 / after_stage2 / after_stage3 --
+    so peak/standing VRAM usage per stage can be inspected after the fact."""
+    dump_json(snapshots, os.path.join(output_dir, "memory_report.json"))
+
+
 def append_generation_log(entry: Dict[str, Any], output_dir: str):
     """Append one generation record to generation_log.json (a growing JSON
     list), so long sweeps/runs can be inspected incrementally and safely

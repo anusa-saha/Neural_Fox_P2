@@ -44,47 +44,28 @@ def load_flores_pairs(lang_code: str, split: str = "devtest", n: int = 200, seed
     """Load n translation-matched (English, target) sentence pairs from FLORES+.
 
     `lang_code` must be a key of config.LANGUAGES (e.g. "hi", "es", "zh", ...).
-
-    Unlike the old (deprecated) `facebook/flores` dataset, `openlanguagedata/flores_plus`
-    does NOT expose hyphenated "eng_Latn-hin_Deva" pair configs or `sentence_<lang>`
-    columns. Each language is its own single-language config (e.g. "hin_Deva") with a
-    flat `text` column, and rows are aligned across languages via a shared `id` column
-    (scoped to `split`). So we load the English config and the target config
-    separately and join on id.
-
-    Note: flores_plus is a gated dataset. You must (1) accept the terms on
-    https://huggingface.co/datasets/openlanguagedata/flores_plus while logged in, and
-    (2) be authenticated locally (`huggingface-cli login`, or pass a token via the
-    HF_TOKEN env var), or `load_dataset` will raise an auth/403 error here regardless
-    of the config name being correct.
+    Uses the HF `facebook/flores` dataset, config name "{eng_flores}-{tgt_flores}"
+    (e.g. "eng_Latn-hin_Deva"), which is sentence-aligned by row index.
     """
     from datasets import load_dataset  # local import: only needed for real runs
 
     if lang_code not in LANGUAGES:
         raise ValueError(f"Unknown language code {lang_code}; add it to config.LANGUAGES")
     flores_tgt = LANGUAGES[lang_code]["flores"]
+    config_name = f"{ENGLISH_FLORES}-{flores_tgt}"
 
-    ds_en = load_dataset("openlanguagedata/flores_plus", ENGLISH_FLORES, split=split)
-    ds_tgt = load_dataset("openlanguagedata/flores_plus", flores_tgt, split=split)
-
-    # Row order isn't guaranteed to match across single-language configs, so join
-    # explicitly on the shared sentence id rather than assuming aligned indices.
-    en_by_id = {row["id"]: row["text"] for row in ds_en}
-    tgt_by_id = {row["id"]: row["text"] for row in ds_tgt}
-    common_ids = sorted(set(en_by_id) & set(tgt_by_id))
-    if not common_ids:
-        raise ValueError(
-            f"No overlapping sentence ids between {ENGLISH_FLORES!r} and {flores_tgt!r} "
-            f"for split={split!r}; check that both configs actually cover this split."
-        )
+    ds = load_dataset("facebook/flores", config_name, split=split, trust_remote_code=True)
+    col_en = f"sentence_{ENGLISH_FLORES}"
+    col_tgt = f"sentence_{flores_tgt}"
 
     rng = random.Random(seed)
-    rng.shuffle(common_ids)
-    chosen = common_ids[: min(n, len(common_ids))]
+    idx = list(range(len(ds)))
+    rng.shuffle(idx)
+    idx = idx[: min(n, len(idx))]
 
     return [
-        MeaningUnit(uid=f"{flores_tgt}-{split}-{sid}", text_en=en_by_id[sid], text_tgt=tgt_by_id[sid])
-        for sid in chosen
+        MeaningUnit(uid=f"{flores_tgt}-{split}-{i}", text_en=ds[i][col_en], text_tgt=ds[i][col_tgt])
+        for i in idx
     ]
 
 

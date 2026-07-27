@@ -1,0 +1,35 @@
+[
+  {
+    "model_key": "llama3_1_8b_instruct",
+    "lang_code": "hi",
+    "n_disc": 150,
+    "n_calib": 40,
+    "n_weak": 60,
+    "lam": 4.0,
+    "beta": 4.0,
+    "gammas": [0, 1, 2],
+    "prompts_file": "scripts/prompts_example.txt"
+  },
+  {
+    "model_key": "llama3_1_8b_instruct",
+    "lang_code": "es",
+    "n_disc": 150,
+    "n_calib": 40,
+    "n_weak": 60,
+    "lam": 4.0,
+    "beta": 4.0,
+    "gammas": [0, 1, 2],
+    "prompts_file": "scripts/prompts_example.txt"
+  },
+  {
+    "model_key": "qwen3_8b",
+    "lang_code": "zh",
+    "n_disc": 150,
+    "n_calib": 40,
+    "n_weak": 60,
+    "lam": 4.0,
+    "beta": 4.0,
+    "gammas": [0, 1, 2],
+    "prompts_file": "scripts/prompts_example.txt"
+  }
+]
