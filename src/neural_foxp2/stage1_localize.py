@@ -24,7 +24,7 @@ from typing import Dict, List, Tuple
 import torch
 
 from .sae_utils import SimpleSAE
-from .activations import ResidualCapture, ResidualSteer
+from .activations import ResidualSteer, capture_hidden_states
 from .metrics import next_token_distributions, delta_m
 
 
@@ -36,6 +36,7 @@ class Stage1Config:
     horizon: int = 3                              # T in {1, 2, 3}
     eps: float = 1e-6
     lift_candidate_pool: int = 64                 # pre-filter size before the (expensive) lift probe
+    capture_batch_size: int = 16                  # chunk size for no_grad activation capture (OOM guard)
 
 
 @dataclass
@@ -122,12 +123,14 @@ def localize_language_features(
     cfg: Stage1Config, device,
 ) -> Dict[int, List[LanguageFeature]]:
     """Full Stage I pipeline -> N_lt organized as {layer: [LanguageFeature, ...]}."""
-    with ResidualCapture(model, model_cfg, cfg.candidate_layers) as cap_en:
-        _ = model(**tokenizer(en_prompts, return_tensors="pt", padding=True).to(device))
-        h_en = dict(cap_en.cache)
-    with ResidualCapture(model, model_cfg, cfg.candidate_layers) as cap_tgt:
-        _ = model(**tokenizer(tgt_prompts, return_tensors="pt", padding=True).to(device))
-        h_tgt = dict(cap_tgt.cache)
+    h_en = capture_hidden_states(
+        model, model_cfg, tokenizer, en_prompts, cfg.candidate_layers, device,
+        batch_size=cfg.capture_batch_size,
+    )
+    h_tgt = capture_hidden_states(
+        model, model_cfg, tokenizer, tgt_prompts, cfg.candidate_layers, device,
+        batch_size=cfg.capture_batch_size,
+    )
 
     z_en = compute_feature_activations(saes, h_en)
     z_tgt = compute_feature_activations(saes, h_tgt)

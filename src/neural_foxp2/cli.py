@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output_dir", required=True,
                     help="Directory to write run_config.json / stage*.json / generation_log.json into")
 
+    p.add_argument("--capture_batch_size", type=int, default=16,
+                    help="Chunk size for activation-capture forward passes. Lower this if you "
+                         "still hit CUDA OOM during Stage I/II activation capture (e.g. on a "
+                         "smaller GPU or with very long prompts); raise it for more throughput "
+                         "on a large-VRAM card.")
     p.add_argument("--n_disc", type=int, default=200, help="# matched pairs for Stage I/II discovery")
     p.add_argument("--n_calib", type=int, default=40, help="# pairs for causal-lift/window-gain calibration")
     p.add_argument("--n_weak", type=int, default=60, help="# weak/neutral prompts (subset of n_calib pairs)")
@@ -73,6 +78,7 @@ def main(argv=None):
         n_disc=args.n_disc, n_calib=args.n_calib, n_weak=args.n_weak,
         top_k_per_layer=args.top_k_per_layer, lam=args.lam, beta=args.beta,
         gamma=args.gamma, seed=args.seed, output_dir=args.output_dir,
+        capture_batch_size=args.capture_batch_size,
     )
     print(f"[foxp2] Stage I/II/III complete in {time.time() - t0:.1f}s. Window = {artifacts.window}")
 

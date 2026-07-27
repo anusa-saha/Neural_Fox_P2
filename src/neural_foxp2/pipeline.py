@@ -45,7 +45,7 @@ import torch
 from .config import MODELS
 from .sae_utils import get_sae_for_layer, SimpleSAE
 from .data_utils import load_flores_pairs, build_matched_prompts, build_weak_prompts
-from .activations import ResidualCapture
+from .activations import capture_hidden_states
 from .metrics import build_token_sets, next_token_distributions, delta_m
 from .stage1_localize import Stage1Config, localize_language_features, compute_feature_activations
 from .stage2_geometry import Stage2Config, compute_layer_geometries, select_window
@@ -131,6 +131,7 @@ class NeuralFOXP2Pipeline:
         gamma: float = 1.0,
         seed: int = 0,
         output_dir: Optional[str] = None,
+        capture_batch_size: int = 16,
     ) -> FOXP2Artifacts:
         t_start = time.time()
         if output_dir:
@@ -139,7 +140,7 @@ class NeuralFOXP2Pipeline:
                     "model_key": self.model_key, "lang_code": self.lang_code, "device": self.device,
                     "candidate_layers": self.candidate_layers, "n_disc": n_disc, "n_calib": n_calib,
                     "n_weak": n_weak, "top_k_per_layer": top_k_per_layer, "lam": lam, "beta": beta,
-                    "gamma": gamma, "seed": seed,
+                    "gamma": gamma, "seed": seed, "capture_batch_size": capture_batch_size,
                 },
                 output_dir,
             )
@@ -157,7 +158,10 @@ class NeuralFOXP2Pipeline:
 
         # ---- Stage I: localize N_lt --------------------------------------
         print("[foxp2] Stage I: localizing language-selective SAE features...")
-        s1_cfg = Stage1Config(candidate_layers=self.candidate_layers, top_k_per_layer=top_k_per_layer)
+        s1_cfg = Stage1Config(
+            candidate_layers=self.candidate_layers, top_k_per_layer=top_k_per_layer,
+            capture_batch_size=capture_batch_size,
+        )
         features = localize_language_features(
             self.model, self.tokenizer, self.model_cfg, self.saes,
             en_prompts, tgt_prompts, weak_prompts_calib,
@@ -176,20 +180,25 @@ class NeuralFOXP2Pipeline:
               f"{len(support)} layers).")
 
         # ---- Activations for Stage II / III (re-encode matched + weak) ---
+        # Same OOM fix as Stage I: no_grad + batched capture instead of a raw,
+        # graph-retaining, single-shot forward pass over every prompt.
         layers = list(support.keys())
-        with ResidualCapture(self.model, self.model_cfg, layers) as cap_en:
-            _ = self.model(**self.tokenizer(en_prompts, return_tensors="pt", padding=True).to(self.device))
-            h_en = dict(cap_en.cache)
-        with ResidualCapture(self.model, self.model_cfg, layers) as cap_tgt:
-            _ = self.model(**self.tokenizer(tgt_prompts, return_tensors="pt", padding=True).to(self.device))
-            h_tgt = dict(cap_tgt.cache)
+        h_en = capture_hidden_states(
+            self.model, self.model_cfg, self.tokenizer, en_prompts, layers, self.device,
+            batch_size=capture_batch_size,
+        )
+        h_tgt = capture_hidden_states(
+            self.model, self.model_cfg, self.tokenizer, tgt_prompts, layers, self.device,
+            batch_size=capture_batch_size,
+        )
         z_en = compute_feature_activations(self.saes, h_en)
         z_tgt = compute_feature_activations(self.saes, h_tgt)
 
         weak_prompts_geo = build_weak_prompts(pairs_disc, rng_seed=seed + 2)
-        with ResidualCapture(self.model, self.model_cfg, layers) as cap_weak:
-            _ = self.model(**self.tokenizer(weak_prompts_geo, return_tensors="pt", padding=True).to(self.device))
-            h_weak = dict(cap_weak.cache)
+        h_weak = capture_hidden_states(
+            self.model, self.model_cfg, self.tokenizer, weak_prompts_geo, layers, self.device,
+            batch_size=capture_batch_size,
+        )
         z_weak = compute_feature_activations(self.saes, h_weak)
 
         # ---- Stage II: low-rank directions + window ----------------------
