@@ -1,0 +1,8 @@
+torch>=2.1
+transformers>=4.44
+datasets>=2.20
+huggingface_hub>=0.24
+accelerate>=0.33
+sae_lens>=3.0
+tqdm
+pytest

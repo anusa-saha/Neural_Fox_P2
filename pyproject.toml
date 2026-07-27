@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neural-foxp2"
+version = "0.1.0"
+description = "Language-specific SAE steering (Neural FOXP2) using pretrained SAEs -- no SAE training required."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.44",
+    "datasets>=2.20",
+    "huggingface_hub>=0.24",
+    "accelerate>=0.33",
+    "sae_lens>=3.0",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+foxp2-run = "neural_foxp2.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -37,26 +37,6 @@ MODELS = {
         "sae_filename_template": "layer{layer}.sae.pt",
         "sae_layer_index_base": 0,
     },
-    "gemma3_12b_it": {
-        "hf_id": "google/gemma-3-12b-it",
-        "family": "gemma3",
-        "n_layers": 48,
-        "hidden_size": 3840,
-        "hook_module_path": "model.language_model.layers.{layer}",
-        "gemma3_scope_release": "gemma-scope-2-12b-it-res-all",
-        "gemma3_scope_width": "16k",
-        "gemma3_scope_l0": "medium",  
-    },
-    "gemma3_4b_it": {
-        "hf_id": "google/gemma-3-4b-it",
-        "family": "gemma3",
-        "n_layers": 34,
-        "hidden_size": 2560,
-        "hook_module_path": "model.language_model.layers.{layer}",
-        "gemma3_scope_release": "gemma-scope-2-4b-it-res-all",
-        "gemma3_scope_width": "16k",
-        "gemma3_scope_l0": "medium",
-    },
 }
 
 # Target languages from the paper -> (FLORES+ config code, ISO-639-1 code for LID)
@@ -71,15 +51,3 @@ ENGLISH_FLORES = "eng_Latn"
 ENGLISH_LID = "en"
 FLORES_SPLITS = ("dev", "devtest")
 
-# --- Stage I hyperparameters ---
-LAYER_STRIDE = 4            
-N_SENTENCES = 300           
-N_CALIBRATION = 24          
-HORIZON_T = 3               
-TOP_CANDIDATES_PER_LAYER = 150   
-TOP_K_FEATURES_PER_LAYER = 20    
-INTERVENTION_EPS = 8.0           
-
-MAX_BATCH_SIZE = 128
-
-OUTPUT_DIR = "foxp2_stage1_outputs"
