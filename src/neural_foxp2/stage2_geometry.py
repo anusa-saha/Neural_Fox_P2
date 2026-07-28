@@ -9,8 +9,9 @@ window (paper Sec. 2.2).
        Delta_Z^(l) = U^(l) Sigma^(l) (V^(l))^T
   3. Choose steering rank r_l via effective-rank + eigengap diagnostics.
   4. Score each candidate layer by spectral Mass, functional Gain, and
-     bootstrap Stability, then select the contiguous window W maximizing
-     sum_{l in W} Mass_l * Stab_l (ties broken by Gain).
+     bootstrap Stability, then select the contiguous (in actual layer-index
+     terms) window W maximizing sum_{l in W} Mass_l * Stab_l (ties broken
+     by Gain).
 """
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
@@ -117,32 +118,41 @@ def bootstrap_stability(delta_z: torch.Tensor, r: int, rounds: int, seed: int = 
 
 
 def _feature_to_hidden(sae: SimpleSAE, z_vec: torch.Tensor) -> torch.Tensor:
-    """decode(z) - decode(0) = z @ W_dec (SAE decoder is linear; Sec 2.3 preliminaries)."""
+    """decode(z) - decode(0) = z @ W_dec (linear part of the SAE decoder).
+    Kept for callers that want just the direction (e.g. reporting/analysis);
+    the actual gain probe below uses the full decode(z_orig + delta) instead
+    (see probe_layer_gain), matching the paper's reconstruction-replace edit
+    rule rather than a pure additive one."""
     return z_vec.to(sae.W_dec.dtype) @ sae.W_dec
 
 
 @torch.no_grad()
 def probe_layer_gain(
-    model, tokenizer, model_cfg, layer: int, direction_hidden: torch.Tensor,
+    model, tokenizer, model_cfg, sae: SimpleSAE, layer: int, direction_z: torch.Tensor,
     weak_prompts, target_ids, english_ids, eta: float, horizon: int, device,
-    batch_size: int = None,
+    batch_size: int = None, eps: float = 1e-8,
 ) -> float:
-    """Gain_l: apply the (data-derived, unnormalized) target direction at a
-    single layer at strength eta, measure induced Delta_M gain (Sec 2.2,
-    "Functional sensitivity"). Used only to *score* candidate windows -- the
-    final Stage III edit uses its own tuned (lambda_l, beta_l)."""
+    """Gain_l = E_x[ (1/(eta*|T|)) * sum_t (Delta_M_eta - Delta_M) ] (Sec 2.2,
+    "Functional sensitivity"). Applies the (data-derived, unnormalized)
+    target direction `direction_z` (a feature-space vector) at a single
+    layer at strength eta via full SAE reconstruction-replace: z <- z +
+    eta*direction_z; h <- decode(z) -- matching the paper's edit rule rather
+    than a pure additive hidden-space edit. Used only to *score* candidate
+    windows -- the final Stage III edit uses its own tuned (lambda_l, beta_l).
+    """
     base_probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device, batch_size=batch_size)
     base_dm = delta_m(base_probs, target_ids.to(device), english_ids.to(device)).mean().item()
 
-    d = eta * direction_hidden
-
-    def fn(h, d=d):
-        return d.to(h.dtype)
+    def fn(h, sae=sae, direction_z=direction_z, eta=eta):
+        z = sae.encode(h)
+        z_edit = z + eta * direction_z
+        h_new = sae.decode(z_edit)
+        return (h_new - h).to(h.dtype)
 
     with ResidualSteer(model, model_cfg, {layer: fn}):
         probs = next_token_distributions(model, tokenizer, weak_prompts, horizon, device, batch_size=batch_size)
     dm = delta_m(probs, target_ids.to(device), english_ids.to(device)).mean().item()
-    return dm - base_dm
+    return (dm - base_dm) / (eta + eps)
 
 
 def compute_layer_geometries(
@@ -167,10 +177,9 @@ def compute_layer_geometries(
         v_r = V[:, :r]
         mean_shift = dz.mean(0)
         proj = v_r @ (v_r.T @ mean_shift)             # P_S(mean shift), in feature space
-        direction_hidden = _feature_to_hidden(saes[layer], proj)
 
         gain = probe_layer_gain(
-            model, tokenizer, model_cfg, layer, direction_hidden,
+            model, tokenizer, model_cfg, saes[layer], layer, proj,
             weak_prompts, target_ids, english_ids, cfg.gain_eta, cfg.horizon, device,
             batch_size=cfg.lift_probe_batch_size,
         )
@@ -183,15 +192,27 @@ def compute_layer_geometries(
 
 def select_window(geoms: Dict[int, LayerGeometry], cfg: Stage2Config) -> List[int]:
     """W = argmax_W sum_{l in W} Mass_l * Stab_l, ties broken by Gain (Sec 2.2,
-    "Choosing the contiguous window")."""
-    layers_sorted = sorted(geoms.keys())
+    "Choosing the contiguous window").
+
+    Candidate windows are contiguous *layer-index* ranges [l0, l0+width), not
+    merely consecutive positions in sorted(geoms.keys()). If any layer in a
+    candidate range is missing from `geoms` (Stage I found zero features
+    there), that window is skipped entirely rather than silently treating
+    the surviving layers as if they were adjacent -- the paper requires an
+    actually-contiguous layer window.
+    """
+    available = set(geoms.keys())
+    if not available:
+        return []
+    lo, hi = min(available), max(available)
+
     best_window: List[int] = []
     best_score, best_gain = -1.0, -1.0
     for width in cfg.window_widths:
-        if width > len(layers_sorted):
-            continue
-        for start in range(len(layers_sorted) - width + 1):
-            window = layers_sorted[start:start + width]
+        for start in range(lo, hi - width + 2):
+            window = list(range(start, start + width))
+            if not all(l in available for l in window):
+                continue
             score = sum(geoms[l].mass * geoms[l].stability for l in window)
             gain = sum(geoms[l].gain for l in window)
             if score > best_score or (score == best_score and gain > best_gain):

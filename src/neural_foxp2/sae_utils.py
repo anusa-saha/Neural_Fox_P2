@@ -3,7 +3,8 @@ from huggingface_hub import hf_hub_download
 
 
 class SimpleSAE:
-    """z = relu(x @ W_enc + b_enc);  dh/dz_j = W_dec[j]  (decoder row for feature j)."""
+    """z = relu(x @ W_enc + b_enc);  h_hat = z @ W_dec + b_dec;
+    dh/dz_j = W_dec[j]  (decoder row for feature j)."""
 
     def __init__(self, W_enc, b_enc, W_dec, b_dec):
         self.W_enc = W_enc
@@ -17,9 +18,10 @@ class SimpleSAE:
         Passing `dtype` (e.g. torch.bfloat16) roughly halves the SAE's
         resident VRAM footprint vs. the fp32 checkpoints these are usually
         released in -- meaningful when many layers' SAEs are held in memory
-        simultaneously during Stage I/II discovery. `encode()`/`decoder_row()`
-        still upcast to float32 for the actual matmuls, so this only affects
-        storage, not numerical precision of any single computation.
+        simultaneously during Stage I/II discovery. `encode()`/`decode()`/
+        `decoder_row()` still upcast to float32 for the actual matmuls, so
+        this only affects storage, not numerical precision of any single
+        computation.
         """
         kwargs = {"device": device}
         if dtype is not None:
@@ -32,6 +34,14 @@ class SimpleSAE:
 
     def encode(self, x):
         return torch.relu(x.float() @ self.W_enc.float() + self.b_enc.float())
+
+    def decode(self, z):
+        """Full SAE reconstruction h_hat = z @ W_dec + b_dec. Used wherever
+        the paper's edit rule is 'h^(l)(x) <- W_l z^(l)(x)' -- i.e. replacing
+        the residual stream with the (edited) reconstruction, not merely
+        adding a delta on top of the original (generally imperfectly
+        reconstructed) h."""
+        return z.float() @ self.W_dec.float() + self.b_dec.float()
 
     def decoder_row(self, feature_idx):
         return self.W_dec[feature_idx].float()

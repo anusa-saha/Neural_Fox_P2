@@ -31,5 +31,24 @@
     "beta": 4.0,
     "gammas": [0, 1, 2],
     "prompts_file": "scripts/prompts_example.txt"
+  },
+  {
+    "model_key": "llama3_1_8b_instruct",
+    "lang_code": "bn",
+    "n_disc": 150,
+    "n_calib": 40,
+    "n_weak": 60,
+    "n_dev": 40,
+    "top_k_per_layer": 12,
+    "k_selection_mode": "adaptive",
+    "adaptive_k_step": 2,
+    "adaptive_k_patience": 2,
+    "adaptive_k_min_gain": 0.005,
+    "lam": 4.0,
+    "tune_beta_kl": true,
+    "beta_grid": [1.0, 2.0, 4.0, 6.0, 8.0, 12.0],
+    "kl_gain_target": 0.8,
+    "gammas": [0, 1, 2],
+    "prompts_file": "scripts/prompts_example.txt"
   }
 ]

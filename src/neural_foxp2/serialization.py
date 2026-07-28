@@ -24,7 +24,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -66,15 +66,19 @@ def save_run_config(config: Dict[str, Any], output_dir: str):
     dump_json(payload, os.path.join(output_dir, "run_config.json"))
 
 
-def save_stage1(features: Dict[int, List], output_dir: str):
-    """Stage I: N_lt -- selectivity, causal-lift-slope, composite score, per layer."""
+def save_stage1(features: Dict[int, List], output_dir: str, k_selection_mode: Optional[str] = None):
+    """Stage I: N_lt -- selectivity, causal-lift-slope, composite score, per
+    layer, plus which K-selection mode ("fixed" | "adaptive") produced them."""
     payload = {
         str(layer): [dataclasses.asdict(f) for f in feats]
         for layer, feats in features.items()
     }
     n_total = sum(len(v) for v in payload.values())
     dump_json(
-        {"n_layers_with_features": len(payload), "n_total_features": n_total, "layers": payload},
+        {
+            "k_selection_mode": k_selection_mode,
+            "n_layers_with_features": len(payload), "n_total_features": n_total, "layers": payload,
+        },
         os.path.join(output_dir, "stage1_features.json"),
     )
 
@@ -135,6 +139,14 @@ def save_memory_report(snapshots: Dict[str, Any], output_dir: str):
     boundaries -- before_run / after_stage1 / after_stage2 / after_stage3 --
     so peak/standing VRAM usage per stage can be inspected after the fact."""
     dump_json(snapshots, os.path.join(output_dir, "memory_report.json"))
+
+
+def save_kl_tuning(diagnostics: Dict[str, Any], output_dir: str):
+    """KL-trust-region beta-tuning diagnostics (Appendix B): the full
+    (beta, gain, kl) grid searched, the chosen beta, and the constraints
+    used to choose it -- written only when NeuralFOXP2Pipeline.run(...) is
+    called with tune_beta_kl=True."""
+    dump_json(diagnostics, os.path.join(output_dir, "kl_tuning.json"))
 
 
 def append_generation_log(entry: Dict[str, Any], output_dir: str):

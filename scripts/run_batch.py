@@ -43,9 +43,13 @@ def build_parser():
     p.add_argument("--default_n_disc", type=int, default=200)
     p.add_argument("--default_n_calib", type=int, default=40)
     p.add_argument("--default_n_weak", type=int, default=60)
+    p.add_argument("--default_n_dev", type=int, default=40)
     p.add_argument("--default_top_k_per_layer", type=int, default=8)
+    p.add_argument("--default_k_selection_mode", choices=["fixed", "adaptive"], default="fixed")
+    p.add_argument("--default_lift_candidate_pool", type=int, default=64)
     p.add_argument("--default_lam", type=float, default=4.0)
     p.add_argument("--default_beta", type=float, default=4.0)
+    p.add_argument("--default_tune_beta_kl", action="store_true")
     p.add_argument("--default_gamma", type=float, default=1.0)
     p.add_argument("--default_prompts_file", type=str, default=None)
     p.add_argument("--default_max_new_tokens", type=int, default=128)
@@ -70,9 +74,20 @@ def run_one_job(job: dict, args) -> dict:
             n_disc=job.get("n_disc", args.default_n_disc),
             n_calib=job.get("n_calib", args.default_n_calib),
             n_weak=job.get("n_weak", args.default_n_weak),
+            n_dev=job.get("n_dev", args.default_n_dev),
             top_k_per_layer=job.get("top_k_per_layer", args.default_top_k_per_layer),
+            k_selection_mode=job.get("k_selection_mode", args.default_k_selection_mode),
+            lift_candidate_pool=job.get("lift_candidate_pool", args.default_lift_candidate_pool),
+            adaptive_k_step=job.get("adaptive_k_step", 2),
+            adaptive_k_patience=job.get("adaptive_k_patience", 2),
+            adaptive_k_min_gain=job.get("adaptive_k_min_gain", 0.005),
+            adaptive_k_alpha=job.get("adaptive_k_alpha", 4.0),
             lam=job.get("lam", args.default_lam),
             beta=job.get("beta", args.default_beta),
+            tune_beta_kl=job.get("tune_beta_kl", args.default_tune_beta_kl),
+            beta_grid=job.get("beta_grid"),
+            kl_gain_target=job.get("kl_gain_target", 0.8),
+            kl_budget=job.get("kl_budget"),
             gamma=job.get("gamma", args.default_gamma),
             seed=job.get("seed", 0),
             output_dir=output_dir,

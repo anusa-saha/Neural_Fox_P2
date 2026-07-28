@@ -113,26 +113,38 @@ def next_token_distributions(
     `min_batch_size`) and retries on `torch.cuda.OutOfMemoryError` before
     re-raising once the floor is hit.
 
+    CORRECTNESS: padding_side is forced to "left" for the duration of this
+    call (and restored after). `out.logits[:, -1, :]` is only the prediction
+    following each prompt's true last token if every row in the batch is
+    left-padded -- with right-padding (the tokenizers-library default), a
+    shorter prompt's "last position" is a PAD token, silently corrupting
+    Delta_M for every prompt but the longest in the batch.
+
     Returns a tensor [n_prompts, horizon, vocab] on `device`.
     """
     prompts = list(prompts)
     if batch_size is None:
         batch_size = len(prompts)
 
-    chunks = []
-    i = 0
-    bs = max(1, batch_size)
-    while i < len(prompts):
-        chunk = prompts[i:i + bs]
-        try:
-            chunks.append(_next_token_distributions_single_batch(model, tokenizer, chunk, horizon, device))
-            i += bs
-        except torch.cuda.OutOfMemoryError:
-            free_memory()
-            if bs <= min_batch_size:
-                raise
-            bs = max(min_batch_size, bs // 2)
-    return torch.cat(chunks, dim=0)
+    original_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        chunks = []
+        i = 0
+        bs = max(1, batch_size)
+        while i < len(prompts):
+            chunk = prompts[i:i + bs]
+            try:
+                chunks.append(_next_token_distributions_single_batch(model, tokenizer, chunk, horizon, device))
+                i += bs
+            except torch.cuda.OutOfMemoryError:
+                free_memory()
+                if bs <= min_batch_size:
+                    raise
+                bs = max(min_batch_size, bs // 2)
+        return torch.cat(chunks, dim=0)
+    finally:
+        tokenizer.padding_side = original_padding_side
 
 
 def mass(probs_bt_v: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:

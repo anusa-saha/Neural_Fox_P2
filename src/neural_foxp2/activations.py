@@ -77,6 +77,14 @@ def capture_hidden_states_batched(
     graph over an 8-9B model's forward pass costs far more memory than the
     forward activations themselves).
 
+    CORRECTNESS: padding_side is forced to "left" for the duration of this
+    call (and restored after). With right-padding (the tokenizers-library
+    default), `h[:, -1, :]` for a shorter prompt in a padded batch lands on a
+    PAD token, not the true last prompt token -- silently corrupting every
+    downstream Stage I/II computation for any batch containing more than one
+    distinct prompt length. Left-padding guarantees position -1 is always
+    the real last token regardless of that row's length.
+
     On `torch.cuda.OutOfMemoryError`, the batch size is automatically halved
     (down to `min_batch_size`) and the *same* chunk of prompts is retried,
     so a single unlucky long prompt degrades gracefully instead of crashing
@@ -86,26 +94,31 @@ def capture_hidden_states_batched(
     (default "cpu" -- these tensors are tiny, batch x d_model, so moving them
     off the GPU costs nothing but keeps VRAM headroom for the next chunk).
     """
-    all_chunks: Dict[int, List[torch.Tensor]] = {l: [] for l in layers}
-    i = 0
-    bs = max(1, batch_size)
-    while i < len(prompts):
-        chunk = prompts[i:i + bs]
-        try:
-            enc = tokenizer(chunk, return_tensors="pt", padding=True).to(device)
-            with ResidualCapture(model, model_cfg, layers) as cap:
-                model(**enc)
-                for l in layers:
-                    all_chunks[l].append(cap.cache[l].to(store_device))
-            del enc
-            i += bs
-        except torch.cuda.OutOfMemoryError:
-            free_memory()
-            if bs <= min_batch_size:
-                raise
-            bs = max(min_batch_size, bs // 2)
+    original_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        all_chunks: Dict[int, List[torch.Tensor]] = {l: [] for l in layers}
+        i = 0
+        bs = max(1, batch_size)
+        while i < len(prompts):
+            chunk = prompts[i:i + bs]
+            try:
+                enc = tokenizer(chunk, return_tensors="pt", padding=True).to(device)
+                with ResidualCapture(model, model_cfg, layers) as cap:
+                    model(**enc)
+                    for l in layers:
+                        all_chunks[l].append(cap.cache[l].to(store_device))
+                del enc
+                i += bs
+            except torch.cuda.OutOfMemoryError:
+                free_memory()
+                if bs <= min_batch_size:
+                    raise
+                bs = max(min_batch_size, bs // 2)
 
-    return {l: torch.cat(chunks, dim=0) for l, chunks in all_chunks.items()}
+        return {l: torch.cat(chunks, dim=0) for l, chunks in all_chunks.items()}
+    finally:
+        tokenizer.padding_side = original_padding_side
 
 
 class ResidualSteer:
